@@ -1,0 +1,11 @@
+{
+  "name": "Vibelink",
+  "description": "Share vibe-coded apps instantly with a link. A Claude Code plugin that lets you push projects to vibelink.to and share them with anyone.",
+  "author": "astein91",
+  "projectId": "bla4iuj8p8hg",
+  "technologies": ["TypeScript", "Cloudflare Workers", "R2", "Claude Code Plugin"],
+  "preview": {
+    "type": "image",
+    "src": "./vibelink-preview.png"
+  }
+}

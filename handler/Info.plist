@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>VibelinkHandler</string>
+    <string>VibelinkOpener</string>
     <key>CFBundleIdentifier</key>
-    <string>app.vibelink.handler</string>
+    <string>to.vibelink.opener</string>
     <key>CFBundleName</key>
-    <string>Vibelink Handler</string>
+    <string>Vibelink Opener</string>
     <key>CFBundleDisplayName</key>
     <string>Vibelink</string>
     <key>CFBundleVersion</key>
@@ -18,18 +18,9 @@
     <string>APPL</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
-    <key>LSUIElement</key>
+    <key>NSHighResolutionCapable</key>
     <true/>
-    <key>CFBundleURLTypes</key>
-    <array>
-        <dict>
-            <key>CFBundleURLName</key>
-            <string>Vibelink URL</string>
-            <key>CFBundleURLSchemes</key>
-            <array>
-                <string>vibelink</string>
-            </array>
-        </dict>
-    </array>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
 </dict>
 </plist>

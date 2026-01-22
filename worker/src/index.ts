@@ -7,6 +7,264 @@ export interface Env {
 const RATE_LIMIT_BYTES_PER_HOUR = 100 * 1024 * 1024; // 100MB
 const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
+// Install script content
+const INSTALL_SCRIPT = `#!/bin/bash
+set -e
+
+echo "Installing vibelink-push skill..."
+
+mkdir -p ~/.claude/skills/vibelink-push
+curl -fsSL https://vibelink.to/skill/vibelink-push.md > ~/.claude/skills/vibelink-push/SKILL.md
+
+echo ""
+echo "✓ Installed vibelink-push skill"
+echo "  Restart Claude Code to use /vibelink-push"
+`;
+
+// Skill file content (embedded)
+const SKILL_CONTENT = `# /vibelink-push
+
+Share the current project via Vibelink.
+
+## What this skill does
+
+1. Analyzes the project to detect name, description, and technologies
+2. Detects if this is a remix of another vibelink project
+3. Starts the dev server (if applicable)
+4. Takes a screenshot of the running app (if browser tools available)
+5. Creates or updates \`vibelink.json\` metadata
+6. Zips the project (excluding node_modules, .git, etc.)
+7. Uploads to vibelink.to
+8. Returns the shareable link
+
+## Instructions
+
+When the user runs \`/vibelink-push\`, follow these steps:
+
+### Step 1: Analyze the project
+
+Look for these files to understand the project:
+- \`package.json\` - for name, description, dependencies
+- \`README.md\` - for description
+- \`vibelink.json\` - existing metadata (if any)
+- Source files - to detect technologies
+
+Detect technologies by looking at:
+- Dependencies in package.json (React, Vue, Svelte, etc.)
+- File extensions (.ts, .tsx, .py, .rs, etc.)
+- Config files (tailwind.config.js, vite.config.ts, etc.)
+
+### Step 2: Check for existing vibelink.json and detect remixes
+
+Check if \`vibelink.json\` exists and examine it:
+
+**Case A: No vibelink.json exists**
+- This is a new project
+- Generate a new projectId
+- Ask user for name, description, author
+
+**Case B: vibelink.json exists with NO \`forkedFrom\` field**
+- This is the original project being updated
+- Keep the same projectId
+- Update metadata if needed
+
+**Case C: vibelink.json exists WITH a \`forkedFrom\` field, but same author**
+- This is the user's own remix being updated
+- Keep the same projectId
+- Update metadata if needed
+
+**Case D: vibelink.json exists and project is in ~/vibelinks/ directory**
+- This was downloaded from vibelink - it's a remix!
+- MUST generate a NEW projectId (never overwrite someone else's project)
+- Set \`forkedFrom\` to the original projectId
+- Ask user: "This looks like a remix of {originalName}. What do you want to call your version?"
+- Suggest a name like "{originalName} Remix" or let them choose
+
+### Step 3: Check for existing project ID
+
+**For NEW projects:**
+- Do NOT generate a project ID - the server will generate one
+- The server returns the generated ID in the response
+
+**For UPDATES (when vibelink.json already has a projectId and you have a saved token):**
+- Use the existing projectId from vibelink.json
+- Include the saved author token
+
+### Step 4: Try to capture a preview screenshot
+
+If browser automation tools (mcp__claude-in-chrome__*) are available:
+
+1. Detect the dev server command and port from package.json scripts or common patterns
+2. Start the dev server in the background
+3. Wait for it to be ready (check if port is listening)
+4. Navigate to localhost:{port} using mcp__claude-in-chrome__navigate
+5. Take a screenshot using mcp__claude-in-chrome__computer with action: "screenshot"
+6. Save the screenshot to \`./vibelink-preview.png\`
+7. Stop the dev server
+
+If browser tools are not available or the app can't be started, skip this step.
+
+### Step 5: Create the zip
+
+Create a zip file excluding:
+- \`node_modules/\`
+- \`.git/\`
+- \`dist/\`
+- \`build/\`
+- \`.next/\`
+- \`__pycache__/\`
+- \`*.pyc\`
+- \`.env\` (but include \`.env.example\` if it exists)
+- \`.DS_Store\`
+- \`vibelink-upload.zip\` (previous upload)
+
+Use: \`zip -r vibelink-upload.zip . -x "node_modules/*" -x ".git/*" ...\`
+
+### Step 6: Upload to vibelink.to
+
+**Determine if this is a NEW project or UPDATE:**
+
+Check if vibelink.json has a \`projectId\` AND you have a saved token in \`~/.vibelink-tokens/{projectId}\`:
+- If BOTH exist: this is an UPDATE
+- Otherwise: this is a NEW project
+
+**Upload the project using curl:**
+
+For NEW projects (server generates the ID):
+\`\`\`bash
+curl -X POST https://vibelink.to/upload \\
+  -F "metadata=@vibelink.json" \\
+  -F "zip=@vibelink-upload.zip" \\
+  -F "preview=@vibelink-preview.png"  # only if preview exists
+\`\`\`
+
+For UPDATES (include projectId and authorToken):
+\`\`\`bash
+curl -X POST https://vibelink.to/upload \\
+  -F "projectId={projectId}" \\
+  -F "authorToken={token}" \\
+  -F "metadata=@vibelink.json" \\
+  -F "zip=@vibelink-upload.zip" \\
+  -F "preview=@vibelink-preview.png"  # only if preview exists
+\`\`\`
+
+**Handle the response:**
+
+The response JSON includes:
+- \`projectId\`: The project's ID (server-generated for new projects)
+- \`url\`: The shareable URL
+- \`isUpdate\`: Whether this was an update
+- \`authorToken\`: (Only for new projects) Save this!
+
+On success (200):
+1. Parse the JSON response to get the \`projectId\`
+2. If response contains \`authorToken\`:
+   - Create tokens directory: \`mkdir -p ~/.vibelink-tokens\`
+   - Save token: \`echo "{token}" > ~/.vibelink-tokens/{projectId}\`
+   - Update vibelink.json with the server-generated \`projectId\`
+3. Display the shareable link
+
+Error responses:
+- 403 Forbidden: Invalid or missing author token for update
+- 404 Not Found: Trying to update a project that doesn't exist
+- 413 Payload Too Large: Project exceeds 100MB limit
+- 429 Rate Limited: Exceeded 100MB/hour upload limit
+
+**On successful upload, display:**
+
+For NEW projects:
+\`\`\`
+Uploaded to Vibelink!
+
+Project: {name}
+{Remixed from: {originalName} - if applicable}
+
+https://vibelink.to/{projectId}
+
+Share this link - anyone can open it in Claude Code!
+
+Your author token has been saved to ~/.vibelink-tokens/{projectId}
+   You'll need this token to update your project later.
+\`\`\`
+
+For UPDATES:
+\`\`\`
+Updated on Vibelink!
+
+Project: {name}
+
+https://vibelink.to/{projectId}
+\`\`\`
+
+### Step 7: Clean up
+
+Optionally remove the zip file after successful upload (keep vibelink.json).
+
+## Example vibelink.json - New project
+
+\`\`\`json
+{
+  "name": "Weather Dashboard",
+  "description": "A real-time weather dashboard with beautiful visualizations",
+  "author": "alexstein",
+  "projectId": "weather-dashboard-x7k2",
+  "technologies": ["React", "TypeScript", "Tailwind CSS", "OpenWeather API"],
+  "preview": {
+    "type": "image",
+    "src": "./vibelink-preview.png"
+  }
+}
+\`\`\`
+
+## Example vibelink.json - Remix
+
+\`\`\`json
+{
+  "name": "Weather Dashboard Dark Mode",
+  "description": "Added dark mode and hourly forecasts to the weather dashboard",
+  "author": "friendname",
+  "projectId": "weather-dashboard-dark-k9p2",
+  "forkedFrom": "weather-dashboard-x7k2",
+  "technologies": ["React", "TypeScript", "Tailwind CSS", "OpenWeather API"],
+  "preview": {
+    "type": "image",
+    "src": "./vibelink-preview.png"
+  }
+}
+\`\`\`
+
+## Important notes
+
+- Always ask for confirmation before uploading
+- Don't include sensitive files (.env, credentials, etc.)
+- NEVER overwrite someone else's project - always create a new ID for remixes
+- If the project is in ~/vibelinks/, it was downloaded and is definitely a remix
+- Give credit by setting \`forkedFrom\` when remixing
+- Author tokens are stored in \`~/.vibelink-tokens/\` - these are needed to update projects
+- If you lose your author token, you cannot update that project (create a new one instead)
+
+## Limits
+
+**Per-project size limit: 100MB**
+
+Vibelink is for small vibe-coded projects, not large repositories.
+
+After creating the zip, check its size:
+\`\`\`bash
+du -h vibelink-upload.zip
+\`\`\`
+
+- **Under 100MB**: Good to go!
+- **Over 100MB**: Stop and warn the user. Suggest:
+  - Make sure node_modules, .git, dist, build are excluded
+  - Remove large assets (videos, large images)
+  - Consider if this project is too big for vibelink
+
+**Rate limit: 100MB per hour per user**
+
+Users can upload up to 100MB total per hour. If rate limited, they'll need to wait before uploading more.
+`;
+
 // Public metadata (returned to users, stored in vibelink.json)
 interface VibelinkMetadata {
   name: string;
@@ -52,6 +310,25 @@ export default {
       if (path === '/' || path === '') {
         return new Response(landingPageHTML(), {
           headers: { 'Content-Type': 'text/html' },
+        });
+      }
+
+      // Skill download endpoint
+      if (path === '/skill/vibelink-push.md') {
+        return new Response(SKILL_CONTENT, {
+          headers: {
+            'Content-Type': 'text/markdown',
+            'Content-Disposition': 'attachment; filename="vibelink-push.md"',
+          },
+        });
+      }
+
+      // Install script endpoint
+      if (path === '/install.sh') {
+        return new Response(INSTALL_SCRIPT, {
+          headers: {
+            'Content-Type': 'text/plain',
+          },
         });
       }
 
@@ -128,13 +405,24 @@ export default {
         });
       }
 
-      // Generate .command launcher file
+      // Generate .command launcher file (legacy, may have permission issues)
       if (action === 'open.command') {
         const commandScript = generateLauncherScript(projectId, metadata.name);
         return new Response(commandScript, {
           headers: {
             'Content-Type': 'application/octet-stream',
             'Content-Disposition': `attachment; filename="${projectId}.command"`,
+          },
+        });
+      }
+
+      // Shell script for curl | bash (recommended method)
+      if (action === 'open') {
+        const openScript = generateOpenScript(projectId, metadata.name);
+        return new Response(openScript, {
+          headers: {
+            'Content-Type': 'text/plain',
+            'Cache-Control': 'no-cache',
           },
         });
       }
@@ -477,6 +765,53 @@ function landingPageHTML(): string {
       border-radius: 4px;
       font-family: 'SF Mono', Monaco, monospace;
     }
+    .install {
+      margin-top: 2.5rem;
+      padding: 1.5rem;
+      background: rgba(155,89,182,0.1);
+      border-radius: 12px;
+      border: 1px solid rgba(155,89,182,0.3);
+      text-align: left;
+    }
+    .install h2 {
+      color: #9b59b6;
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      text-align: center;
+    }
+    .install-cmd {
+      background: rgba(0,0,0,0.3);
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.9rem;
+      margin: 0.75rem 0;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .install p {
+      color: #ccc;
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+    }
+    .install .or {
+      text-align: center;
+      color: #666;
+      margin: 1rem 0;
+      font-size: 0.85rem;
+    }
+    .install a {
+      color: #00d4ff;
+      text-decoration: none;
+    }
+    .install a:hover {
+      text-decoration: underline;
+    }
+    .install .path {
+      color: #888;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -486,7 +821,7 @@ function landingPageHTML(): string {
     <div class="features">
       <div class="feature">
         <h3>1. Push</h3>
-        <p>Run <code>vibelink push</code> in Claude Code to share your project</p>
+        <p>Run <code>/vibelink-push</code> in Claude Code to share your project</p>
       </div>
       <div class="feature">
         <h3>2. Share</h3>
@@ -496,6 +831,14 @@ function landingPageHTML(): string {
         <h3>3. Vibe</h3>
         <p>Others click the link, it opens directly in Claude Code</p>
       </div>
+    </div>
+    <div class="install">
+      <h2>Install the Skill</h2>
+      <p>Run this in your terminal:</p>
+      <div class="install-cmd">curl -fsSL vibelink.to/install.sh | bash</div>
+      <p class="or">- or -</p>
+      <p><a href="/skill/vibelink-push.md" download>Download vibelink-push.md</a> manually</p>
+      <p class="path">Save to: ~/.claude/skills/vibelink-push/SKILL.md</p>
     </div>
     <p style="margin-top: 2rem; color: #666; font-size: 0.85rem;">Currently macOS only. Windows &amp; Linux coming soon.</p>
   </div>
@@ -665,18 +1008,116 @@ function previewPageHTML(projectId: string, metadata: VibelinkMetadata): string 
     .security-warning strong {
       color: #ffc107;
     }
+    .open-command {
+      margin: 1.5rem 0;
+      padding: 1.25rem;
+      background: rgba(0,212,255,0.08);
+      border-radius: 8px;
+      border: 1px solid rgba(0,212,255,0.2);
+    }
+    .open-command h4 {
+      color: #00d4ff;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+    .open-command > p {
+      color: #aaa;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+    .command-box {
+      display: flex;
+      align-items: center;
+      background: rgba(0,0,0,0.4);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      gap: 0.75rem;
+    }
+    .command-box code {
+      flex: 1;
+      font-family: 'SF Mono', Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      color: #0f0;
+      word-break: break-all;
+      background: none;
+      padding: 0;
+    }
+    .copy-btn {
+      background: rgba(0,212,255,0.2);
+      border: 1px solid rgba(0,212,255,0.3);
+      border-radius: 4px;
+      padding: 0.4rem 0.6rem;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background 0.2s;
+    }
+    .copy-btn:hover {
+      background: rgba(0,212,255,0.4);
+    }
+    .copied-msg {
+      color: #0f0;
+      font-size: 0.8rem;
+      margin-top: 0.5rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    .copied-msg.show {
+      opacity: 1;
+    }
+    .share-footer {
+      margin-top: 2rem;
+      padding: 1.25rem;
+      background: rgba(155,89,182,0.1);
+      border-radius: 8px;
+      border: 1px solid rgba(155,89,182,0.3);
+      text-align: center;
+    }
+    .share-footer h4 {
+      color: #9b59b6;
+      margin-bottom: 0.5rem;
+      font-size: 1rem;
+    }
+    .share-footer p {
+      color: #ccc;
+      font-size: 0.9rem;
+      margin-bottom: 0.75rem;
+    }
+    .share-footer code {
+      background: rgba(0,0,0,0.3);
+      padding: 0.4rem 0.75rem;
+      border-radius: 4px;
+      font-family: 'SF Mono', Monaco, monospace;
+      font-size: 0.85rem;
+      display: inline-block;
+    }
+    .share-footer a {
+      color: #00d4ff;
+      text-decoration: none;
+    }
+    .share-footer a:hover {
+      text-decoration: underline;
+    }
   </style>
+  <script>
+    function copyCommand() {
+      const cmd = document.getElementById('open-cmd').textContent;
+      navigator.clipboard.writeText(cmd).then(() => {
+        const msg = document.getElementById('copied-msg');
+        msg.classList.add('show');
+        setTimeout(() => msg.classList.remove('show'), 2000);
+      });
+    }
+  </script>
 </head>
 <body>
   <div class="container">
     <a href="/" class="back">&larr; vibelink</a>
     <div class="card">
+      ${previewSrc ? `
       <div class="preview">
-        ${previewSrc
-          ? `<img src="${previewSrc}" alt="Preview of ${escapeHtml(metadata.name)}">`
-          : `<span>No preview available</span>`
-        }
+        <img src="${previewSrc}" alt="Preview of ${escapeHtml(metadata.name)}">
       </div>
+      ` : ''}
       <div class="content">
         <h1>${escapeHtml(metadata.name)}</h1>
         ${metadata.author ? `<p class="author">by ${escapeHtml(metadata.author)}</p>` : ''}
@@ -692,18 +1133,31 @@ function previewPageHTML(projectId: string, metadata: VibelinkMetadata): string 
             ${new Date(metadata.createdAt).toLocaleDateString()}
           </div>
         </div>
-        <a href="/${projectId}/open.command" class="button" download>Open in Claude Code</a>
-        <a href="/${projectId}/download" class="button button-secondary">Download ZIP</a>
+
+        <div class="open-command">
+          <h4>Open in Claude Code</h4>
+          <p>Copy and paste this command into Terminal:</p>
+          <div class="command-box">
+            <code id="open-cmd">curl -fsSL https://vibelink.to/${projectId}/open | bash</code>
+            <button onclick="copyCommand()" class="copy-btn" title="Copy to clipboard">📋</button>
+          </div>
+          <p class="copied-msg" id="copied-msg">Copied!</p>
+        </div>
+
+        <div style="margin-top: 1rem;">
+          <a href="/${projectId}/download" class="button button-secondary">Download ZIP</a>
+        </div>
+
         <div class="install-note">
           <h4>📋 Requirements (macOS only)</h4>
           <p>This project opens in <strong>Claude Code</strong> - an AI-powered coding assistant that will help you run and explore it.</p>
           <ol>
             <li>Download <a href="https://claude.ai/download">Claude for macOS</a></li>
             <li>Open Claude and run <code>/install-claude-code</code></li>
-            <li>Click "Open in Claude Code" above</li>
+            <li>Run the command above in Terminal</li>
           </ol>
           <p style="margin-top: 0.75rem; color: #888; font-size: 0.85rem;">
-            Don't have Claude Code? The launcher will still download the project and open the install page for you.
+            Don't have Claude Code? The script will still download the project and guide you through installation.
             <br>Windows &amp; Linux support coming soon - for now, use "Download ZIP" instead.
           </p>
         </div>
@@ -712,6 +1166,14 @@ function previewPageHTML(projectId: string, metadata: VibelinkMetadata): string 
           Review the code before running it. Claude Code will ask for your approval before executing commands.
         </div>
       </div>
+    </div>
+    <div class="share-footer">
+      <h4>Want to share your own project?</h4>
+      <p>Install the vibelink skill for Claude Code:</p>
+      <code>curl -fsSL vibelink.to/install.sh | bash</code>
+      <p style="margin-top: 0.75rem; font-size: 0.8rem; color: #888;">
+        Or <a href="/skill/vibelink-push.md" download>download manually</a>
+      </p>
     </div>
   </div>
 </body>
@@ -854,4 +1316,9 @@ exec "$CLAUDE_PATH" "Hey! I just downloaded this project from vibelink. Can you:
 
 Let's go!"
 `;
+}
+
+function generateOpenScript(projectId: string, projectName: string): string {
+  // Same as launcher script but formatted for curl | bash
+  return generateLauncherScript(projectId, projectName);
 }

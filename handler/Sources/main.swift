@@ -3,30 +3,20 @@ import Foundation
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSAppleEventManager.shared().setEventHandler(
-            self,
-            andSelector: #selector(handleURLEvent(_:withReplyEvent:)),
-            forEventClass: AEEventClass(kInternetEventClass),
-            andEventID: AEEventID(kAEGetURL)
-        )
-    }
-
-    @objc func handleURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
-        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
-              let url = URL(string: urlString) else {
-            showError("Invalid URL received")
+        // Get project ID from our own bundle name
+        // e.g., "bla4iuj8p8hg.app" -> "bla4iuj8p8hg"
+        guard let bundlePath = Bundle.main.bundlePath as NSString? else {
+            showError("Could not determine bundle path")
             return
         }
 
-        handleVibelinkURL(url)
-    }
+        let bundleName = bundlePath.lastPathComponent
+        let projectId = (bundleName as NSString).deletingPathExtension
 
-    func handleVibelinkURL(_ url: URL) {
-        // Parse: vibelink://open/abc123 or vibelink://abc123
-        let projectId = url.host ?? url.pathComponents.dropFirst().first ?? ""
-
-        guard !projectId.isEmpty else {
-            showError("No project ID found in URL: \(url)")
+        // Validate project ID (should be alphanumeric)
+        guard !projectId.isEmpty,
+              projectId.range(of: "^[a-zA-Z0-9_-]+$", options: .regularExpression) != nil else {
+            showError("Invalid project ID: \(projectId)\n\nThis app should be named like 'abc123.app' where abc123 is a vibelink project ID.")
             return
         }
 
@@ -47,7 +37,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         try? FileManager.default.createDirectory(at: vibelinksDir, withIntermediateDirectories: true)
 
         // Download the zip
-        let downloadURL = URL(string: "https://vibelink.app/\(projectId)/download")!
+        let downloadURL = URL(string: "https://vibelink.to/\(projectId)/download")!
 
         showNotification(title: "Vibelink", message: "Downloading \(projectId)...")
 
@@ -86,7 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let actualProjectDir = findProjectRoot(in: projectDir)
 
             // Open Claude Code in the project directory
-            openClaudeCode(at: actualProjectDir)
+            openClaudeCode(at: actualProjectDir, projectId: projectId)
 
             showNotification(title: "Vibelink", message: "Opened \(projectId) in Claude Code!")
 
@@ -117,35 +107,68 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return directory
     }
 
-    func openClaudeCode(at directory: URL) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", "cd '\(directory.path)' && claude"]
-        process.environment = ProcessInfo.processInfo.environment
+    func openClaudeCode(at directory: URL, projectId: String) {
+        // Initial prompt for Claude to introduce the project
+        let initialPrompt = """
+        Hey! I just downloaded this project from vibelink.to/\(projectId). Can you:
+        1. Tell me what this project is and what it does
+        2. Install any dependencies needed
+        3. Start the dev server or run it
+        4. Give me a quick tour of the key files
 
-        // Add common paths
-        var env = process.environment ?? [:]
-        let additionalPaths = [
-            "/usr/local/bin",
-            "/opt/homebrew/bin",
-            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin"
+        Let's go!
+        """
+
+        // Try to find claude in common locations
+        let claudePaths = [
+            "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin/claude",
+            "/usr/local/bin/claude",
+            "/opt/homebrew/bin/claude"
         ]
-        env["PATH"] = (env["PATH"] ?? "") + ":" + additionalPaths.joined(separator: ":")
-        process.environment = env
 
-        do {
-            try process.run()
-        } catch {
-            // Fallback: try to open Terminal with claude command
-            let script = """
-                tell application "Terminal"
-                    activate
-                    do script "cd '\(directory.path)' && claude"
-                end tell
-            """
+        var claudePath: String?
+        for path in claudePaths {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                claudePath = path
+                break
+            }
+        }
 
-            let appleScript = NSAppleScript(source: script)
-            appleScript?.executeAndReturnError(nil)
+        if let claudePath = claudePath {
+            // Launch Claude Code directly
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: claudePath)
+            process.arguments = [initialPrompt]
+            process.currentDirectoryURL = directory
+            process.environment = ProcessInfo.processInfo.environment
+
+            do {
+                try process.run()
+                return
+            } catch {
+                print("Failed to launch claude directly: \(error)")
+            }
+        }
+
+        // Fallback: open Terminal with claude command
+        let escapedPath = directory.path.replacingOccurrences(of: "'", with: "'\\''")
+        let escapedPrompt = initialPrompt.replacingOccurrences(of: "'", with: "'\\''").replacingOccurrences(of: "\n", with: "\\n")
+
+        let script = """
+            tell application "Terminal"
+                activate
+                do script "cd '\(escapedPath)' && claude '\(escapedPrompt)'"
+            end tell
+        """
+
+        let appleScript = NSAppleScript(source: script)
+        var error: NSDictionary?
+        appleScript?.executeAndReturnError(&error)
+
+        if error != nil {
+            // Last resort: just open the folder in Finder
+            NSWorkspace.shared.open(directory)
+            showError("Could not find Claude Code. Please install it from https://claude.ai/download\n\nYour project was downloaded to:\n\(directory.path)")
         }
     }
 
