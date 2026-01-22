@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Vibelink Metadata",
+  "description": "Metadata for a vibelink-shared project",
+  "type": "object",
+  "required": ["name", "description"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Display name of the project",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "description": {
+      "type": "string",
+      "description": "Brief description of what the project does",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "author": {
+      "type": "string",
+      "description": "Author name or handle"
+    },
+    "projectId": {
+      "type": "string",
+      "description": "Unique identifier for this project (auto-generated)",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "forkedFrom": {
+      "type": "string",
+      "description": "Project ID this was remixed from (if applicable)",
+      "pattern": "^[a-zA-Z0-9_-]+$"
+    },
+    "technologies": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "List of key technologies used (e.g., ['React', 'TypeScript', 'Tailwind'])"
+    },
+    "preview": {
+      "type": "object",
+      "description": "Preview configuration",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["image", "mockup", "auto"],
+          "description": "Type of preview"
+        },
+        "src": {
+          "type": "string",
+          "description": "Path to preview image (for type: image)"
+        },
+        "layout": {
+          "type": "string",
+          "description": "Layout type for mockup generation (for type: mockup)"
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Component hints for mockup generation"
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "description": "Launch configuration (optional, Claude will auto-detect if not provided)",
+      "properties": {
+        "install": {
+          "type": "string",
+          "description": "Command to install dependencies"
+        },
+        "dev": {
+          "type": "string",
+          "description": "Command to start dev server"
+        },
+        "build": {
+          "type": "string",
+          "description": "Command to build for production"
+        },
+        "port": {
+          "type": "number",
+          "description": "Port the dev server runs on"
+        }
+      }
+    }
+  }
+}

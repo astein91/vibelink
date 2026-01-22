@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+*.app
+*.zip
+.build/
+dist/
+
+# Environment / secrets
+.env
+*.pem
+*.p12
+
+# macOS
+.DS_Store
+
+# Cloudflare
+.wrangler/
+.upload-secret
+.claude/settings.local.json

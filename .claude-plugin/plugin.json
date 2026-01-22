@@ -1,0 +1,11 @@
+{
+  "name": "vibelink",
+  "version": "1.0.0",
+  "description": "Share your vibe-coded apps instantly with a link. Push projects to vibelink and let others open them directly in Claude Code.",
+  "author": {
+    "name": "Alex Stein",
+    "email": "alexander.paul.stein@gmail.com"
+  },
+  "repository": "https://github.com/alexstein/vibelink",
+  "keywords": ["sharing", "vibe-coding", "deployment", "collaboration"]
+}
