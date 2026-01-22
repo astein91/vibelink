@@ -427,8 +427,12 @@ export default {
         });
       }
 
+      // Check if preview image actually exists in R2
+      const previewKey = `${projectId}/preview.png`;
+      const previewExists = await env.BUCKET.head(previewKey);
+
       // Default: serve the preview page
-      return new Response(previewPageHTML(projectId, metadata), {
+      return new Response(previewPageHTML(projectId, metadata, !!previewExists), {
         headers: { 'Content-Type': 'text/html' },
       });
 
@@ -846,9 +850,9 @@ function landingPageHTML(): string {
 </html>`;
 }
 
-function previewPageHTML(projectId: string, metadata: VibelinkMetadata): string {
-  const hasPreview = metadata.preview?.type === 'image';
-  const previewSrc = hasPreview ? `/${projectId}/preview.png` : null;
+function previewPageHTML(projectId: string, metadata: VibelinkMetadata, previewExists: boolean): string {
+  // Only show preview if the image actually exists in R2
+  const previewSrc = previewExists ? `/${projectId}/preview.png` : null;
   const technologies = metadata.technologies?.join(', ') || 'Not specified';
   const forkedFrom = metadata.forkedFrom;
 
